@@ -21,7 +21,11 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.8.2")
 
     // This dependency is used by the application.
+    // 고성능 무손실 멀티 해싱을 위한 라이브러리 (Count-Min Sketch 핵심 무기)
     implementation("com.google.guava:guava:31.0.1-jre")
+
+    // 핵심 고성능 네트워크 엔진 (Netty)
+    implementation("io.netty:netty-all:4.1.110.Final")
 }
 
 application {
