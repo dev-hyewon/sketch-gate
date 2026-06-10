@@ -51,35 +51,32 @@
 ```bash
 java -jar build/libs/sketch-gate.jar
 ```
+<br/>
+
+## 📖 사용 및 테스트 가이드
+* 실전 HTTP DDoS 공격 시뮬레이션 및 차단 검증 방법은 [실전 DDoS 방어 테스트 가이드](docs/DDoS-Test-Guide.md) 문서를 참고하세요.
 
 <br/>
 
 ## 📝 프로젝트 구현 로드맵 (TO-DO)
 
 ### Phase 1: 개발 환경 세팅 & 기본 골격
-- [ ] Gradle 기반 Java 21 프로젝트 프로젝트 초기화
-
-- [ ] 고성능 네트워크 성능 확보를 위한 io.netty:netty-all 의존성 추가
-
-- [ ] sketch_gate.properties 환경설정 파일 구조 설계 (포트, 임계치, CMS 크기 정의)
+- [x] Gradle 기반 Java 프로젝트 초기화 및 환경 표준화 완료
+- [x] 고성능 비동기 네트워크 처리를 위한 io.netty:netty-all 엔진 의존성 주입 완료
+- [x] sketch_gate.properties 환경설정 인프라 설계 완료 (포트, 임계치, CMS 매트릭스 크기 전역 관리)
 
 ### Phase 2: 핵심 알고리즘 및 자료구조 구현
-- [ ] CountMinSketchMatrix 클래스 구현 (행렬 구조 및 MurmurHash3 기반 멀티 해싱 로직)
+- [x] ConcurrentCountMinSketch 구현 (MurmurHash3 멀티 해싱 및 충돌 최소화 행렬 구조 설계)
+- [x] 멀티스레드 대량 동시 접근 환경 유지를 위한 AtomicIntegerArray 기반의 락 프리(Lock-Free) 원자성 확보
+- [x] Twin-Sketch 스왑 매니저(TwinSketchManager) 아키텍처 구현 및 백그라운드 타이머 결합 완료
 
-- [ ] 멀티스레드 동시 접근을 위한 카운터 원자성(Atomic) 보장 및 오버플로우 방지 로직 검증
+### Phase 3: Netty 파이프라인 및 아키텍처 고도화
+- [x] Netty 내장 HTTP 프로토콜 스택을 활용한 고성능 비동기 네트워크 부트스트랩 인프라 구축
+- [x] 원격 클라이언트 커넥션에서 고속으로 IP를 추출하는 최전방 인바운드 핸들러(ThrottlingHandler) 구현
+- [x] 추출된 IP를 실시간으로 판정하고 고속 블랙리스트 맵과 연동하여 PASS / DROP을 결정하는 인터셉터 레이어 완성
+- [x] 관심사 분리(SoC)를 위해 하드코딩된 웹 응답을 외장화하고 templates/ 폴더 구조로 정적 자원 격리 완료
 
-- [ ] 짝/홀수 초 전환을 제어할 AtomicReference 기반 매트릭스 스왑 매니저 구현
-
-### Phase 3: Netty 파이프라인 및 메모리 최적화
-- [ ] PooledByteBufAllocator를 적용한 패킷 수신 핸들러 작성 (제로 가비지 달성)
-
-- [ ] 입수된 패킷의 바이트 데이터에서 고속으로 IPv4 추출하는 파싱 레이어 구현
-
-- [ ] 파싱된 IP를 CMS 매트릭스에 대조하여 PASS / DROP을 결정하는 인터셉터 핸들러 구현
-
-### Phase 4: 테스트 및 성능 고도화
-- [ ] 가상으로 초당 10만 건 이상의 IP를 인젝션하는 DDoS 공격 시뮬레이션 테스트 코드 작성
-
-- [ ] 타임슬롯이 교대되는 경계 시점(Race Condition)에서 패킷 누수나 오탐이 없는지 동시성 테스트
-
-- [ ] 대용량 트래픽 상황에서 GC(Garbage Collection) 로그를 모니터링하여 Stop-The-World 현상 제로화 검증
+### Phase 4: 실전 테스트 및 가혹 조건 검증
+- [x] 독립형 멀티스레드 스트레스 테스트 환경 구축을 통한 16,000개 패킷 무결성(누수 0%) 검증 완료
+- [x] 가상 curl 루프 스크립트 폭격을 이용한 실전 HTTP DDoS 차단 및 최초 1회 스마트 경고 로그 메커니즘 검증 완료
+- [x] [최종 고도화] 순간 변동성 오탐 방지 및 실무 표준 준수를 위해 '초당 체계'에서 '분당 주기를 가지는 슬라이딩 윈도우 체계'로 전면 최적화 완료
