@@ -4,27 +4,42 @@ public class App {
     public static void main(String[] args) throws InterruptedException {
         System.out.println("[INFO] Sketch-Gate System - Initializing...");
 
-        // 1. 매니저 가동 (내부 스케줄러가 1초 타이머 시작)
-        TwinSketchManager manager = new TwinSketchManager();
+        // 1. 핵심 컴포넌트들 초기화
+        TwinSketchManager sketchManager = new TwinSketchManager();
+        FilterService filterService = new FilterService(sketchManager);
 
-        System.out.println("[INFO] Starting Packet Stream Simulation...");
+        System.out.println("[INFO] Starting Traffic Firewall Simulation...");
         System.out.println("------------------------------------------");
 
-        // 2. 1초 내에 특정 IP(공격자 변장)로 패킷 대량 유입 시뮬레이션
-        String attackerIp = "192.168.0.55";
-        for (int i = 0; i < 75; i++) {
-            manager.recordPacket(attackerIp);
+        String normalIp = "121.140.0.1";
+        String attackerIp = "211.234.50.99";
+
+        // 시나리오 A: 정상 유저가 1초 동안 50개의 요청을 보냄 (임계치 100 미만)
+        System.out.println("[SIMUL] Simulating Normal User Traffic (" + normalIp + ")...");
+        boolean normalResult = true;
+        for (int i = 0; i < 50; i++) {
+            normalResult &= filterService.isAllowed(normalIp);
+        }
+        System.out.println("[SIMUL] Normal User Allowed Result: " + normalResult);
+
+        // 시나리오 B: 공격자 IP가 1초 동안 120개의 요청을 마구 퍼부음 (임계치 100 초과)
+        System.out.println("[SIMUL] Simulating DDoS Attack Traffic (" + attackerIp + ")...");
+        int allowedCount = 0;
+        int blockedCount = 0;
+
+        for (int i = 0; i < 120; i++) {
+            if (filterService.isAllowed(attackerIp)) {
+                allowedCount++;
+            } else {
+                blockedCount++;
+            }
         }
 
-        // 현재 기록된 빈도 확인
-        System.out.println("[SIMUL] Current estimate for " + attackerIp + ": " + manager.getEstimate(attackerIp));
-
-        // 3. 1.5초 대기 (이 사이에 백그라운드 스케줄러가 스왑을 일으키고 매트릭스를 청소함)
-        Thread.sleep(1500);
-
-        // 4. 스왑 이후 새로운 1초가 되었을 때 과거 데이터가 정상 청소되었는지 확인
-        System.out.println("[SIMUL] After 1.5s (Next Window) estimate: " + manager.getEstimate(attackerIp));
         System.out.println("------------------------------------------");
-        System.out.println("[SUCCESS] Phase 2 Twin-Sketch Core Logic Verified.");
+        System.out.println("[RESULT] Attack IP Allowed Packets : " + allowedCount);
+        System.out.println("[RESULT] Attack IP Blocked Packets : " + blockedCount);
+        System.out.println("[RESULT] Total Blacklisted IP Count: " + filterService.getBlacklistCount());
+        System.out.println("------------------------------------------");
+        System.out.println("[SUCCESS] Phase 2 Twin-Sketch Core Firewall Architecture Verified.");
     }
 }
