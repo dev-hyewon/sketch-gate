@@ -34,9 +34,13 @@ public class FilterService {
         // 3. 설정된 임계치를 초과했는지 판정
         if (currentCount > maxLimit) {
             // 원자적으로 블랙리스트에 등록 (차단 시점 기록)
-            blacklist.putIfAbsent(ip, System.currentTimeMillis());
-            System.out.println(
-                    "[WARN] ALERT! IP " + ip + " exceeded limit (" + currentCount + "/" + maxLimit + "). Blocked.");
+            if (blacklist.putIfAbsent(ip, System.currentTimeMillis()) == null) {
+                // 공격자가 블랙리스트에 등록되는 최초 1번만 경고 로그가 출력됨
+                System.out.println("--------------------------------------------------");
+                System.out.println("[WARN] ALERT! 임계치 초과 공격 IP 즉시 차단: " + ip);
+                System.out.println("[WARN] 현재 분당 인입량 추정치: " + currentCount + " (제한: " + maxLimit + ")");
+                System.out.println("--------------------------------------------------");
+            }
             return false;
         }
 
