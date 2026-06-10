@@ -1,45 +1,65 @@
 package sketch.gate;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public class App {
     public static void main(String[] args) throws InterruptedException {
-        System.out.println("[INFO] Sketch-Gate System - Initializing...");
+        System.out.println("[INFO] Sketch-Gate System - Launching Thread Safety Test...");
 
-        // 1. 핵심 컴포넌트들 초기화
-        TwinSketchManager sketchManager = new TwinSketchManager();
-        FilterService filterService = new FilterService(sketchManager);
+        ConfigManager config = ConfigManager.getInstance();
+        int width = config.getInt("cms.width", 65536);
+        int depth = config.getInt("cms.depth", 4);
 
-        System.out.println("[INFO] Starting Traffic Firewall Simulation...");
-        System.out.println("------------------------------------------");
+        ConcurrentCountMinSketch testSketch = new ConcurrentCountMinSketch(width, depth);
 
-        String normalIp = "121.140.0.1";
-        String attackerIp = "211.234.50.99";
+        int threadCount = 32;
+        int packetsPerThread = 500;
+        int totalExpectedPackets = threadCount * packetsPerThread; // 총 16,000개
 
-        // 시나리오 A: 정상 유저가 1초 동안 50개의 요청을 보냄 (임계치 100 미만)
-        System.out.println("[SIMUL] Simulating Normal User Traffic (" + normalIp + ")...");
-        boolean normalResult = true;
-        for (int i = 0; i < 50; i++) {
-            normalResult &= filterService.isAllowed(normalIp);
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch latch = new CountDownLatch(threadCount);
+
+        String attackerIp = "185.220.101.5";
+
+        System.out.println("[SIMUL] Starting Multi-Threaded Pure Stress Test...");
+        System.out.println("[SIMUL] Total threads: " + threadCount + " | Packets per thread: " + packetsPerThread);
+        System.out.println("--------------------------------------------------");
+
+        long startTime = System.currentTimeMillis();
+
+        // 32개 스레드가 원자적 매트릭스 한 곳에 미친 듯이 동시 난사 유도
+        for (int i = 0; i < threadCount; i++) {
+            // 💡 submit 대신 명확하게 execute(Runnable)를 사용하여 타입 모호성 해결
+            executor.execute(() -> {
+                try {
+                    for (int p = 0; p < packetsPerThread; p++) {
+                        testSketch.add(attackerIp);
+                    }
+                } finally { // 💡 오타였던 package-private 구문 제거
+                    latch.countDown();
+                }
+            });
         }
-        System.out.println("[SIMUL] Normal User Allowed Result: " + normalResult);
 
-        // 시나리오 B: 공격자 IP가 1초 동안 120개의 요청을 마구 퍼부음 (임계치 100 초과)
-        System.out.println("[SIMUL] Simulating DDoS Attack Traffic (" + attackerIp + ")...");
-        int allowedCount = 0;
-        int blockedCount = 0;
+        latch.await();
+        long duration = System.currentTimeMillis() - startTime;
 
-        for (int i = 0; i < 120; i++) {
-            if (filterService.isAllowed(attackerIp)) {
-                allowedCount++;
-            } else {
-                blockedCount++;
-            }
+        int finalEstimate = testSketch.estimate(attackerIp);
+
+        System.out.println("--------------------------------------------------");
+        System.out.println("[RESULT] Stress Test Duration      : " + duration + " ms");
+        System.out.println("[RESULT] Total Simulated Packets   : " + totalExpectedPackets);
+        System.out.println("[RESULT] Core Matrix Count Estimate: " + finalEstimate);
+        System.out.println("--------------------------------------------------");
+
+        if (finalEstimate == totalExpectedPackets) {
+            System.out.println("[SUCCESS] Thread Safety Verification Passed. No count loss detected!");
+        } else {
+            System.out.println("[FAIL] Race Condition Detected. Count loss: " + (totalExpectedPackets - finalEstimate));
         }
 
-        System.out.println("------------------------------------------");
-        System.out.println("[RESULT] Attack IP Allowed Packets : " + allowedCount);
-        System.out.println("[RESULT] Attack IP Blocked Packets : " + blockedCount);
-        System.out.println("[RESULT] Total Blacklisted IP Count: " + filterService.getBlacklistCount());
-        System.out.println("------------------------------------------");
-        System.out.println("[SUCCESS] Phase 2 Twin-Sketch Core Firewall Architecture Verified.");
+        executor.shutdown();
     }
 }
