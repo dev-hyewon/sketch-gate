@@ -49,7 +49,7 @@ public class ConcurrentCountMinSketch {
     }
 
     /**
-     * 새로운 1초를 맞이하기 위해 매트릭스 내부를 안전하게 0으로 초기화합니다.
+     * 새로운 1분을 맞이하기 위해 매트릭스 내부를 안전하게 0으로 초기화합니다.
      */
     public void clear() {
         for (int i = 0; i < depth; i++) {

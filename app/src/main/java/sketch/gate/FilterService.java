@@ -15,7 +15,7 @@ public class FilterService {
 
         // Phase 1에서 구축한 설정 파일로부터 최대 임계치(기본값 100)를 로드
         this.maxLimit = ConfigManager.getInstance().getInt("packet.max.limit", 100);
-        System.out.println("[INFO] FilterService initialized. Max Limit/sec: " + maxLimit);
+        System.out.println("[INFO] FilterService initialized. Max Limit/min: " + maxLimit);
     }
 
     /**
@@ -27,7 +27,7 @@ public class FilterService {
             return false;
         }
 
-        // 2. 현재 1초 동안 이 IP가 보낸 패킷 수 1 증가 및 추정치 조회
+        // 2. 현재 1분 동안 이 IP가 보낸 패킷 수 1 증가 및 추정치 조회
         sketchManager.recordPacket(ip);
         int currentCount = sketchManager.getEstimate(ip);
 

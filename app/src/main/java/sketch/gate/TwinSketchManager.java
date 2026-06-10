@@ -25,7 +25,7 @@ public class TwinSketchManager {
         // 시작 시점에는 A를 활성 상태로 지정
         this.activeSketch = new AtomicReference<>(sketchA);
 
-        // 1초 주기로 스왑을 실행할 백그라운드 스케줄러 가동
+        // 1분 주기로 스왑을 실행할 백그라운드 스케줄러 가동
         this.scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "sketch-swap-scheduler");
             thread.setDaemon(true); // 애플리케이션 종료 시 함께 종료되도록 데몬 설정
@@ -36,7 +36,7 @@ public class TwinSketchManager {
     }
 
     /**
-     * 1초마다 정확하게 스케치 포인터를 스왑하고, 과거 스케치를 비동기로 청소합니다.
+     * 1분마다 정확하게 스케치 포인터를 스왑하고, 과거 스케치를 비동기로 청소합니다.
      */
     private void startSlider() {
         scheduler.scheduleAtFixedRate(() -> {
@@ -48,13 +48,13 @@ public class TwinSketchManager {
                 // 원자적(Atomic) 포인터 변경 - 1나노초 이내에 수행되어 패킷 유실을 최소화함
                 activeSketch.set(next);
 
-                // [중요] 역할이 바뀐 직전 과거의 스케치를 깨끗하게 청소하여 다음 1초를 준비함 (메모리 재사용)
+                // [중요] 역할이 바뀐 직전 과거의 스케치를 깨끗하게 청소하여 다음 1분을 준비함 (메모리 재사용)
                 current.clear();
                 System.out.println("[INFO] Twin-Sketch Swap completed. Past matrix cleared.");
             } catch (Exception e) {
                 System.err.println("[ERROR] Error occurred during sketch swapping: " + e.getMessage());
             }
-        }, 1, 1, TimeUnit.SECONDS); // 1초마다 실행
+        }, 1, 1, TimeUnit.MINUTES); // 1분마다 실행
     }
 
     /**
