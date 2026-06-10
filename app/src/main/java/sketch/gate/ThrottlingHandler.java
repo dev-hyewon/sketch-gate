@@ -27,11 +27,12 @@ public class ThrottlingHandler extends ChannelInboundHandlerAdapter {
 
             // 실시간 차단 성공 시 콘솔 로그를 남기지 않고 즉시 403으로 응답만 출력됨
             if (!filterService.isAllowed(clientIp)) {
+
+                String forbiddenHtml = ResponseTemplateLoader.loadHtml("templates/forbidden.html");
                 FullHttpResponse response = new DefaultFullHttpResponse(
                         HttpVersion.HTTP_1_1,
                         HttpResponseStatus.FORBIDDEN,
-                        Unpooled.copiedBuffer("<html><body><h1>403 Forbidden: DDoS Attack Detected.</h1></body></html>",
-                                CharsetUtil.UTF_8));
+                        Unpooled.copiedBuffer(forbiddenHtml, CharsetUtil.UTF_8));
                 response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/html; charset=UTF-8");
                 response.headers().set(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes());
 

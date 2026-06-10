@@ -12,12 +12,11 @@ public class GateServerHandler extends SimpleChannelInboundHandler<HttpObject> {
     protected void channelRead0(ChannelHandlerContext ctx, HttpObject msg) throws Exception {
         if (msg instanceof HttpRequest) {
             // 방어벽을 통과한 정상적인 유저에게 내려줄 200 OK 응답
+            String welcomeHtml = ResponseTemplateLoader.loadHtml("templates/welcome.html");
             FullHttpResponse response = new DefaultFullHttpResponse(
                     HttpVersion.HTTP_1_1,
                     HttpResponseStatus.OK,
-                    Unpooled.copiedBuffer(
-                            "<html><body><h1>200 OK: Welcome to Sketch-Gate Secure Network!</h1></body></html>",
-                            CharsetUtil.UTF_8));
+                    Unpooled.copiedBuffer(welcomeHtml, CharsetUtil.UTF_8));
             response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/html; charset=UTF-8");
             response.headers().set(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes());
 
