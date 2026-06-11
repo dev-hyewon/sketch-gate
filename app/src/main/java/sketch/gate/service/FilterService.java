@@ -1,6 +1,9 @@
-package sketch.gate;
+package sketch.gate.service;
 
 import java.util.concurrent.ConcurrentHashMap;
+
+import sketch.gate.core.TwinSketchManager;
+import sketch.gate.util.ConfigManager;
 
 public class FilterService {
     private final TwinSketchManager sketchManager;

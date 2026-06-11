@@ -1,4 +1,4 @@
-package sketch.gate;
+package sketch.gate.util;
 
 import java.io.InputStream;
 import java.util.Properties;
