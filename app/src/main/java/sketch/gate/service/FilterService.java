@@ -1,9 +1,8 @@
 package sketch.gate.service;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.io.*;
+import java.nio.file.*;
+import java.util.concurrent.*;
 import java.time.LocalDateTime;
 import java.time.Duration;
 
@@ -12,7 +11,6 @@ import sketch.gate.util.ConfigManager;
 
 public class FilterService {
 
-    // 차단 사유를 명확히 구별하기 위한 내부 Enum 추가
     public enum FilterResult {
         ALLOWED, // 정상 통과 (200 OK)
         DENIED_MINUTELY, // RPM(분당) 임계치 초과 차단 (403)
@@ -30,8 +28,17 @@ public class FilterService {
     // 2차 필터: RPM 임계치를 넘어 완전히 영구 블랙리스트로 격리된 공격 IP 관리 맵 (기존 유지)
     private final ConcurrentHashMap<String, Long> blacklist = new ConcurrentHashMap<>();
 
+    // [병목 방지 핵심] 비동기 파일 쓰기 작업을 적재할 고속 메모리 큐 (스레드 안전)
+    private final LinkedBlockingQueue<String> fileWriteQueue = new LinkedBlockingQueue<>();
+
     // 자정 정기 청소를 위한 단일 스레드 스케줄러
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+
+    // 파일 쓰기를 전담하여 Netty 스레드를 보호할 독립 단일 스레드 풀
+    private final ExecutorService fileWriterExecutor = Executors.newSingleThreadExecutor();
+
+    // 블랙리스트를 저장할 텍스트 파일 경로 선언
+    private final Path blacklistFilePath = Paths.get("data", "blacklist.txt");
 
     public FilterService(TwinSketchManager sketchManager) {
         this.sketchManager = sketchManager;
@@ -46,6 +53,12 @@ public class FilterService {
 
         // 매일 자정(00:00:00)에 dailyCounts 맵을 완전히 비워주는 스케줄러 시동
         startDailyResetScheduler();
+
+        // 1. 서버 시작 시 기존에 저장된 블랙리스트 파일이 있다면 복구 로드
+        loadBlacklistFromFile();
+
+        // 2. 비동기 파일 쓰기 백그라운드 루프 엔진 기동
+        startAsyncFileWriter();
     }
 
     /**
@@ -78,6 +91,9 @@ public class FilterService {
                 System.out.println("[WARN] ALERT! 분당 임계치 초과 공격 IP 즉시 차단: " + ip);
                 System.out.println("[WARN] 현재 분당 인입량 추정치: " + currentMinutelyCount + " (제한: " + maxLimit + ")");
                 System.out.println("--------------------------------------------------");
+
+                // [병목 방지] 파일에 직접 쓰지 않고 비동기 대기열 큐에 IP를 던집니다 (무정체 넌블로킹)
+                fileWriteQueue.offer(ip);
             }
             return FilterResult.DENIED_MINUTELY;
         }
@@ -90,6 +106,63 @@ public class FilterService {
             System.out.println("--------------------------------------------------");
         }
         return FilterResult.ALLOWED;
+    }
+
+    /**
+     * 백그라운드에서 큐를 상시 감시하며 파일에 이어쓰기(Append)를 수행하는 독립 엔진
+     */
+    private void startAsyncFileWriter() {
+        fileWriterExecutor.submit(() -> {
+            Thread.currentThread().setName("SketchGate-AsyncFileWriter");
+            try (BufferedWriter writer = Files.newBufferedWriter(blacklistFilePath,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+
+                while (!Thread.currentThread().isInterrupted()) {
+                    // 큐에 데이터가 들어올 때까지 스레드가 대기(take)하므로 CPU를 전혀 갉아먹지 않음
+                    String ipToWrite = fileWriteQueue.take();
+
+                    writer.write(ipToWrite);
+                    writer.newLine();
+                    writer.flush(); // 디스크 즉시 반영
+                }
+            } catch (InterruptedException e) {
+                System.out.println("[INFO] Async FileWriter 스레드가 안전하게 종료되었습니다.");
+            } catch (IOException e) {
+                System.err.println("[ERROR] 블랙리스트 파일 쓰기 중 오류 발생: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 서버 부팅 시 파일 시스템에서 차단 IP 명단을 읽어 메모리 맵을 부활시킵니다.
+     */
+    private void loadBlacklistFromFile() {
+        try {
+            if (blacklistFilePath.getParent() != null) {
+                Files.createDirectories(blacklistFilePath.getParent());
+            }
+        } catch (IOException e) {
+            System.err.println("[ERROR] 데이터 저장소 폴더 생성 실패: " + e.getMessage());
+        }
+
+        System.out.println("[INFO] 발견된 블랙리스트 파일 로드 중... (" + blacklistFilePath.toAbsolutePath() + ")");
+        int loadedCount = 0;
+
+        try (BufferedReader reader = Files.newBufferedReader(blacklistFilePath)) {
+            String ip;
+            long currentTimestamp = System.currentTimeMillis();
+            while ((ip = reader.readLine()) != null) {
+                ip = ip.trim();
+                if (!ip.isEmpty()) {
+                    // 기존 차단 시점 정보가 없으므로 로드된 현재 시점 타임스탬프로 메모리 복구
+                    blacklist.put(ip, currentTimestamp);
+                    loadedCount++;
+                }
+            }
+            System.out.println("[INFO] 기존 블랙리스트 IP " + loadedCount + "개가 성공적으로 복구되어 방어벽이 재가동되었습니다.");
+        } catch (IOException e) {
+            System.err.println("[ERROR] 블랙리스트 파일 로딩 실패: " + e.getMessage());
+        }
     }
 
     /**
@@ -114,6 +187,7 @@ public class FilterService {
      */
     public void shutdown() {
         scheduler.shutdown();
+        fileWriterExecutor.shutdownNow();
     }
 
     /**
@@ -124,10 +198,27 @@ public class FilterService {
     }
 
     /**
-     * [관리용] 테스트 및 오탐 해제를 위해 특정 IP를 블랙리스트에서 해제합니다.
+     * 💡 관리자가 수동으로 차단 해제 시, 메모리에서 지우고 파일 전체를 새로고침(Rewrite) 큐에 위임
      */
     public void unblock(String ip) {
-        blacklist.remove(ip);
+        if (blacklist.remove(ip) == null)
+            return;
+
         dailyCounts.remove(ip);
+
+        // 해제 시에는 한 줄만 지우기 까다로우므로 전체 맵 상태를 파일에 새로 덮어쓰도록 비동기 실행
+        fileWriterExecutor.submit(() -> {
+            try (BufferedWriter writer = Files.newBufferedWriter(blacklistFilePath,
+                    StandardOpenOption.TRUNCATE_EXISTING)) {
+                for (String remainingIp : blacklist.keySet()) {
+                    writer.write(remainingIp);
+                    writer.newLine();
+                }
+                writer.flush();
+                System.out.println("[INFO] 파일 저장소에서 IP 해제 반영 완료: " + ip);
+            } catch (IOException e) {
+                System.err.println("[ERROR] 블랙리스트 파일 언블록 반영 실패: " + e.getMessage());
+            }
+        });
     }
 }
