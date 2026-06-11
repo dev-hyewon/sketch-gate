@@ -26,7 +26,11 @@ public class ThrottlingHandler extends ChannelInboundHandlerAdapter {
             InetSocketAddress remoteAddress = (InetSocketAddress) ctx.channel().remoteAddress();
             String clientIp = remoteAddress.getAddress().getHostAddress();
 
-            if (!filterService.isAllowed(clientIp)) {
+            FilterService.FilterResult result = filterService.checkResult(clientIp);
+
+            // ALLOWED가 아니라면 차단 공정 시작 (RPM 또는 RPD 걸림)
+            if (result != FilterService.FilterResult.ALLOWED) {
+
                 String userAgent = request.headers().get("User-Agent", "").toLowerCase();
                 String accept = request.headers().get("Accept", "").toLowerCase();
                 boolean isTerminal = userAgent.contains("curl")
@@ -34,18 +38,29 @@ public class ThrottlingHandler extends ChannelInboundHandlerAdapter {
                         || accept.contains("text/plain");
 
                 FullHttpResponse response;
+                String textResponse;
+                String htmlTemplatePath;
+
+                if (result == FilterService.FilterResult.DENIED_DAILY) {
+                    // 일일 제한(RPD) 초과 케이스
+                    textResponse = "403 Forbidden: Daily Quota Exceeded.\n";
+                    htmlTemplatePath = "templates/quota_exceeded.html"; // ◀️ 1단계에서 신설할 파일명
+                } else {
+                    // 분당 제한(RPM) 초과 케이스 (기존 유지)
+                    textResponse = "403 Forbidden: DDoS Attack Detected.\n";
+                    htmlTemplatePath = "templates/forbidden.html";
+                }
 
                 if (isTerminal) {
-                    // 터미널 접근용: 깔끔한 한 줄 텍스트 응답 (줄바꿈 \n 포함)
-                    String textResponse = "403 Forbidden: DDoS Attack Detected.\n";
+                    // 터미널 접근용
                     response = new DefaultFullHttpResponse(
                             HttpVersion.HTTP_1_1,
                             HttpResponseStatus.FORBIDDEN,
                             Unpooled.copiedBuffer(textResponse, CharsetUtil.UTF_8));
                     response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
                 } else {
-                    // 일반 브라우저 접근용: 기존대로 HTML 템플릿 응답
-                    String forbiddenHtml = ResponseTemplateLoader.loadHtml("templates/forbidden.html");
+                    // 일반 브라우저 접근용
+                    String forbiddenHtml = ResponseTemplateLoader.loadHtml(htmlTemplatePath);
                     response = new DefaultFullHttpResponse(
                             HttpVersion.HTTP_1_1,
                             HttpResponseStatus.FORBIDDEN,
