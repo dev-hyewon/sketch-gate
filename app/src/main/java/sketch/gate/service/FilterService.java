@@ -4,7 +4,10 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.concurrent.*;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 
 import sketch.gate.core.TwinSketchManager;
 import sketch.gate.util.ConfigManager;
@@ -20,6 +23,9 @@ public class FilterService {
     private final TwinSketchManager sketchManager;
     private final int maxLimit; // RPM (분당 제한)
     private final int dailyLimit; // RPD (일일 제한)
+
+    // 파일에 기록할 날짜 표준 포맷 정의 (예: 2026-06-12 16:58:53)
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     // 1차 필터: 일일 요청 카운트를 누적 관리할 고속 락 프리 맵 (대안 B)
     // Key: IP 주소, Value: 오늘 하루 누적 요청 횟수
@@ -125,7 +131,10 @@ public class FilterService {
                     String ipToWrite = fileWriteQueue.poll(1, TimeUnit.SECONDS);
 
                     if (ipToWrite != null) {
-                        writer.write(ipToWrite);
+                        String date = LocalDate.now().toString();
+                        String time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+                        String logLine = date + "\t" + time + "\t" + ipToWrite;
+                        writer.write(logLine);
                         writer.newLine();
                         writer.flush(); // 디스크 즉시 반영
                     } else {
@@ -163,17 +172,23 @@ public class FilterService {
         int loadedCount = 0;
 
         try (BufferedReader reader = Files.newBufferedReader(blacklistFilePath)) {
-            String ip;
+            String line;
             long currentTimestamp = System.currentTimeMillis();
-            while ((ip = reader.readLine()) != null) {
-                ip = ip.trim();
-                if (!ip.isEmpty()) {
-                    // 기존 차단 시점 정보가 없으므로 로드된 현재 시점 타임스탬프로 메모리 복구
-                    blacklist.put(ip, currentTimestamp);
-                    loadedCount++;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+
+                if (line.length() > 20) {
+                    String ip = line.substring(20).trim();
+                    if (!ip.isEmpty()) {
+                        blacklist.put(ip, currentTimestamp);
+                    }
                 }
             }
-            System.out.println("[INFO] 기존 블랙리스트 IP " + loadedCount + "개가 성공적으로 복구되어 방어벽이 재가동되었습니다.");
+            if (loadedCount > 0) {
+                System.out.println("[INFO] 기존 블랙리스트 IP " + loadedCount + "개를 불러와 차단 정책을 적용했습니다.");
+            } else {
+                System.out.println("[INFO] 등록된 블랙리스트 IP가 없습니다.");
+            }
         } catch (IOException e) {
             System.err.println("[ERROR] 블랙리스트 파일 로딩 실패: " + e.getMessage());
         }
@@ -249,8 +264,10 @@ public class FilterService {
         fileWriterExecutor.submit(() -> {
             try (BufferedWriter writer = Files.newBufferedWriter(blacklistFilePath,
                     StandardOpenOption.TRUNCATE_EXISTING)) {
+                // 💡 [수정] 수동 해제 시 남은 IP들을 다시 파일에 밀어 넣을 때도 시간 규격을 맞춰서 리빌드합니다.
+                String nowStr = LocalDateTime.now().format(TIME_FORMATTER);
                 for (String remainingIp : blacklist.keySet()) {
-                    writer.write(remainingIp);
+                    writer.write("[" + nowStr + "] " + remainingIp);
                     writer.newLine();
                 }
                 writer.flush();
