@@ -117,18 +117,32 @@ public class FilterService {
             try (BufferedWriter writer = Files.newBufferedWriter(blacklistFilePath,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
 
+                // shutdown()이 호출되었더라도 큐에 잔여 작업이 남아있다면 루프를 유지함
                 while (!Thread.currentThread().isInterrupted()) {
-                    // 큐에 데이터가 들어올 때까지 스레드가 대기(take)하므로 CPU를 전혀 갉아먹지 않음
-                    String ipToWrite = fileWriteQueue.take();
 
-                    writer.write(ipToWrite);
-                    writer.newLine();
-                    writer.flush(); // 디스크 즉시 반영
+                    // poll()을 사용해 1초 동안 큐를 대기합니다.
+                    // 데이터가 오면 즉시 반환하고, 1초 동안 안 오면 null을 반환합니다.
+                    String ipToWrite = fileWriteQueue.poll(1, TimeUnit.SECONDS);
+
+                    if (ipToWrite != null) {
+                        writer.write(ipToWrite);
+                        writer.newLine();
+                        writer.flush(); // 디스크 즉시 반영
+                    } else {
+                        // 1초 동안 데이터가 안 왔는데, 만약 외부에서 shutdown()이 호출된 상태라면?
+                        // 대기열도 비었고 종료 명령도 받았으니, 미련 없이 루프를 탈출(break)합니다.
+                        if (fileWriterExecutor.isShutdown() && fileWriteQueue.isEmpty()) {
+                            break;
+                        }
+                    }
                 }
             } catch (InterruptedException e) {
-                System.out.println("[INFO] Async FileWriter 스레드가 안전하게 종료되었습니다.");
+                // poll() 대기 중에 shutdownNow() 등으로 인터럽트가 걸리면 이쪽으로 들어옵니다.
+                System.out.println("[INFO] Async FileWriter 스레드가 인터럽트 신호를 받아 안전하게 종료되었습니다.");
             } catch (IOException e) {
                 System.err.println("[ERROR] 블랙리스트 파일 쓰기 중 오류 발생: " + e.getMessage());
+            } finally {
+                System.out.println("[INFO] Async FileWriter 스레드가 파일 자원을 해제하고 최종 종료되었습니다.");
             }
         });
     }
@@ -183,11 +197,36 @@ public class FilterService {
     }
 
     /**
-     * [관리용] 시스템 종료 시 안전하게 스케줄러 스레드를 풀 풀링 해제하기 위한 훅 (선택)
+     * [관리용] 시스템 종료 시 호출되며, 큐에 남아있는 모든 차단 IP를 파일에 안전하게 기록한 후 스레드를 종료합니다.
      */
     public void shutdown() {
+        // 1. 일일 카운트 리셋용 정기 스케줄러 즉시 중지
         scheduler.shutdown();
-        fileWriterExecutor.shutdownNow();
+
+        System.out.println("[INFO] SketchGate 비동기 파일 저장소의 Graceful Shutdown을 시작합니다...");
+
+        // 2. 파일 쓰기 엔진에게 더 이상 새로운 작업(submit)을 받지 않음을 선언
+        fileWriterExecutor.shutdown();
+
+        try {
+            // 3. 큐에 남아있는 잔여 데이터가 있는지 확인하고 최종 반영 대기
+            int remainingTasks = fileWriteQueue.size();
+            if (remainingTasks > 0) {
+                System.out.println("[INFO] 종료 전 처리 중: 대기열에 남은 " + remainingTasks + "개의 IP를 파일에 안전하게 플러시합니다.");
+            }
+
+            // 4. 최대 5초 동안 큐의 작업이 모두 파일로 기록되어 스레드 풀이 자연 종료되기를 기다림
+            if (!fileWriterExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                System.out.println("[WARN] 지정된 대기 시간(5초) 내에 파일 쓰기가 완료되지 않아 강제 종료를 수행합니다.");
+                fileWriterExecutor.shutdownNow();
+            } else {
+                System.out.println("[SUCCESS] 모든 잔여 차단 명단이 파일(`data/blacklist.txt`)에 유실 없이 저장되었습니다.");
+            }
+        } catch (InterruptedException e) {
+            System.err.println("[ERROR] Graceful Shutdown 중 인터럽트가 발생했습니다.");
+            fileWriterExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
